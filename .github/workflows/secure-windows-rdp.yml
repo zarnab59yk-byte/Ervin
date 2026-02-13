@@ -1,0 +1,93 @@
+name: Create Secure Windows RDP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 360   # حداکثر ۶ ساعت (محدودیت GitHub)
+
+    steps:
+      # ────── ۱. نصب Tailscale ──────
+      - name: Install Tailscale
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" -OutFile "tailscale-setup.exe"
+          Start-Process -FilePath "tailscale-setup.exe" -ArgumentList "/S" -Wait
+          Remove-Item "tailscale-setup.exe"
+
+      # ────── ۲. اتصال به Tailscale ──────
+      - name: Connect to Tailscale
+        shell: pwsh
+        env:
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}   # ← اینو تو Secrets بذار
+        run: |
+          tailscale up --authkey \( env:TS_AUTHKEY --hostname "github-rdp- \){{ github.run_id }}" --accept-routes --accept-dns
+
+      # ────── ۳. فعال کردن RDP و تنظیم کاربر ──────
+      - name: Enable RDP + Set Credentials
+        shell: pwsh
+        run: |
+          # فعال کردن RDP
+          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
+          netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
+
+          # کاربر runneradmin رو فعال و رمزگذاری کن
+          net user runneradmin /active:yes
+          net user runneradmin "@SecureRDP2026"   # ← این رمز رو عوض کن اگه خواستی
+
+          Write-Host "RDP فعال شد + رمز تنظیم شد" -ForegroundColor Green
+
+      # ────── ۴. چک کردن پورت RDP ──────
+      - name: Verify RDP Port
+        shell: pwsh
+        run: |
+          $port = Get-NetTCPConnection -LocalPort 3389 -ErrorAction SilentlyContinue
+          if ($port) {
+              Write-Host "✅ پورت 3389 باز و در حال اجراست" -ForegroundColor Green
+          } else {
+              Write-Host "⚠️ پورت 3389 باز نشد" -ForegroundColor Red
+          }
+
+      # ────── ۵. نمایش اطلاعات اتصال (این همون بخشی بود که خطا می‌داد) ──────
+      - name: RDP Connection Info
+        shell: pwsh
+        run: |
+          # ──────────────────────────────────────────────────────────────
+          #                Secure Windows RDP - Connection Info
+          # ──────────────────────────────────────────────────────────────
+
+          Write-Host "`n[=============================================================]" -ForegroundColor Magenta
+          Write-Host "                  🔐 Secure Windows RDP is READY!                  " -ForegroundColor Cyan
+          Write-Host "[=============================================================]`n" -ForegroundColor Magenta
+
+          # گرفتن IP Tailscale
+          $tsIP = (tailscale ip -4) 2>$null
+          if ($tsIP) {
+              Write-Host "🌐 Tailscale IP Address : " -NoNewline -ForegroundColor Green
+              Write-Host $tsIP -ForegroundColor White
+          } else {
+              Write-Host "⚠️  Tailscale IP پیدا نشد." -ForegroundColor Yellow
+          }
+
+          Write-Host "👤 Username               : " -NoNewline -ForegroundColor Green
+          Write-Host "runneradmin" -ForegroundColor White
+
+          Write-Host "🔑 Password               : " -NoNewline -ForegroundColor Green
+          Write-Host "@SecureRDP2026" -ForegroundColor White
+
+          Write-Host "`n📌 نحوه اتصال:" -ForegroundColor Yellow
+          Write-Host "   1. Tailscale رو روی دستگاهت نصب کن → https://tailscale.com/download" -ForegroundColor White
+          Write-Host "   2. با همون اکانت Tailscale لاگین کن" -ForegroundColor White
+          Write-Host "   3. توی Remote Desktop (RDP) IP بالا رو بزن" -ForegroundColor White
+
+          Write-Host "`n✅ همه چیز آماده‌ست! لذت ببر 😎" -ForegroundColor Green
+          Write-Host "[=============================================================]`n" -ForegroundColor Magenta
+
+      # ────── ۶. نگه داشتن workflow زنده (تا ۶ ساعت) ──────
+      - name: Keep Runner Alive
+        shell: pwsh
+        run: |
+          Write-Host "Runner در حال اجراست... (حداکثر ۶ ساعت)" -ForegroundColor Cyan
+          Start-Sleep -Seconds 21600   # ۶ ساعت
